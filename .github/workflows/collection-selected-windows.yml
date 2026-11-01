@@ -1,0 +1,75 @@
+name: Build collection-selected test for Windows x64
+
+on:
+  push:
+    branches:
+      - build/collection-selected-windows-x64
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Check out the collection-selected fix
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: source
+          submodules: recursive
+          persist-credentials: false
+      - name: Check out the upstream Windows dependencies
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: batocera-linux/batocera-emulationstation-win32-dependencies
+          ref: 468eaba48c028921a4bf2abdfa3f3a00ce8d4c0d
+          path: batocera-emulationstation-win32-dependencies
+          persist-credentials: false
+      - name: Configure a Release x64 build for RetroBat
+        run: cmake -S source -B build -G "Visual Studio 17 2022" -A x64 -DRETROBAT=ON -DGL=ON -DCEC=OFF
+      - name: Build
+        run: cmake --build build --config Release --target emulationstation --parallel 2
+      - name: Validate and package the executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Get-ChildItem source/bin -Recurse -Filter emulationstation.exe | Where-Object { $_.FullName -match 'Release' } | Select-Object -First 1
+          if (!$exe) { throw 'Release executable not found' }
+          $bytes = [System.IO.File]::ReadAllBytes($exe.FullName)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0x8664) { throw "Unexpected PE machine: $machine" }
+
+          New-Item -ItemType Directory -Force package, smoke | Out-Null
+          Copy-Item $exe.FullName package/emulationstation.exe
+          Copy-Item $exe.FullName smoke/emulationstation.exe
+          Copy-Item source/SCRIPTING.md, source/LICENSE.md package/
+          $deps = 'batocera-emulationstation-win32-dependencies'
+          Copy-Item "$deps/FreeImage/x64/*.dll", "$deps/SDL2/x64/*.dll", "$deps/SDL2_mixer/x64/*.dll", "$deps/curl/x64/bin/*.dll", "$deps/libvlc/x64/*.dll" smoke/
+          Copy-Item "$deps/SDL2_mixer/x64/optional/*.dll" smoke/
+          $p = Start-Process -FilePath (Resolve-Path smoke/emulationstation.exe) -ArgumentList '--help' -WorkingDirectory (Resolve-Path smoke) -PassThru
+          if (!$p.WaitForExit(20000)) { $p.Kill(); throw 'Executable startup timed out' }
+          $p.Refresh()
+          if ($p.ExitCode -ne 0) { throw "Executable startup failed: $($p.ExitCode)" }
+
+          $hash = (Get-FileHash package/emulationstation.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  emulationstation.exe" | Set-Content package/SHA256SUMS.txt
+          @(
+            'Experimental collection-selected test build'
+            'Target: Windows x64 / MSVC Release / RETROBAT=ON'
+            'Fix commit: 4f259ed245994098bc07a3058facefe47d9ea42d'
+            "Build commit: $env:GITHUB_SHA"
+            'Windows dependencies: 468eaba48c028921a4bf2abdfa3f3a00ce8d4c0d'
+            "Build: https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            'Validated: AMD64 PE header and native Windows --help exit code 0'
+            'Pending: navigation with the user carousel theme'
+          ) | Set-Content package/BUILD-INFO.txt
+      - name: Upload the test executable
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: EmulationStation-collection-selected-Windows-x64
+          path: package/*
+          if-no-files-found: error
+          retention-days: 14
