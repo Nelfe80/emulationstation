@@ -6,6 +6,7 @@
 #include "utils/VectorEx.h"
 #include "Paths.h"
 #include <thread>
+#include <condition_variable>
 #include <set>
 #include <map>
 #include <mutex>

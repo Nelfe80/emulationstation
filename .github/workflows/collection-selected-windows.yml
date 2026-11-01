@@ -36,7 +36,13 @@ jobs:
         run: |
           cmake --build build --config Release --target emulationstation --parallel 2 2>&1 | Tee-Object -FilePath windows-build.log
           $buildExitCode = $LASTEXITCODE
-          $diagnostic = ((Get-Content windows-build.log | Select-String -Pattern 'error (C|LNK|MSB)\d|fatal error|CMake Error' | Select-Object -First 6 | ForEach-Object { $_.Line.Trim() }) -join ' | ')
+          $seenFiles = @{}
+          $diagnostics = foreach ($match in (Get-Content windows-build.log | Select-String -Pattern 'error (C|LNK|MSB)\d|fatal error|CMake Error')) {
+            $line = $match.Line.Trim() -replace '^.*\\source\\', '' -replace ' \[.*\]$', ''
+            $file = ($line -split '\(')[0]
+            if (!$seenFiles.ContainsKey($file)) { $seenFiles[$file] = $true; $line }
+          }
+          $diagnostic = ($diagnostics | Select-Object -First 15) -join ' | '
           "diagnostic=$diagnostic" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           exit $buildExitCode
       - name: "Compiler diagnostics: ${{ steps.compile.outputs.diagnostic }}"
@@ -71,6 +77,7 @@ jobs:
             'Experimental collection-selected test build'
             'Target: Windows x64 / MSVC Release / RETROBAT=ON'
             'Fix commit: 4f259ed245994098bc07a3058facefe47d9ea42d'
+            'Build portability: explicit chrono and condition_variable includes for MSVC'
             "Build commit: $env:GITHUB_SHA"
             'Windows dependencies: 468eaba48c028921a4bf2abdfa3f3a00ce8d4c0d'
             "Build: https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"

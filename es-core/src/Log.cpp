@@ -14,6 +14,7 @@
 #include <csignal>
 
 #include <thread>
+#include <chrono>
 #include <condition_variable>
 
 #if WIN32
